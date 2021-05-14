@@ -826,24 +826,29 @@ class PsiturkNetworkShell(Cmd, object):
                     return self.poutput(result)
                 results = result.data['results']
             elif arg['<assignment_id>']:
-                result = self.amt_services_wrapper.reject_assignment(
-                    arg['<assignment_id>'], all_studies=all_studies)
-                if not result.success:
-                    return self.poutput(result)
-                results = result.data['results']
+                for assignment_id in arg['<assignment_id>']:
+                    result = self.amt_services_wrapper.reject_assignment(
+                        assignment_id, all_studies=all_studies)
+                    self.poutput(result)
             if results:
                 for _result in results:
                     self.poutput(_result)
 
         elif arg['unreject']:
             if arg['<hit_id>']:
-                self.amt_services_wrapper.unreject_assignments_for_hit(
+                result = self.amt_services_wrapper.unreject_assignments_for_hit(
                     arg['<hit_id>'], all_studies=all_studies)
+                if not result.success:
+                    return self.poutput(result)
+                results = result.data['results']
             elif arg['<assignment_id>']:
                 for assignment_id in arg['<assignment_id>']:
                     result = self.amt_services_wrapper.unreject_assignment(
                         assignment_id, all_studies=all_studies)
                     self.poutput(result)
+            if results:
+                for _result in results:
+                    self.poutput(_result)
 
         elif arg['list']:
             status = None
