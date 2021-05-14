@@ -475,7 +475,6 @@ class MTurkServicesWrapper(object):
 
     @amt_services_wrapper_response
     def reject_mturk_assignment(self, assignment, ignore_local_not_found=False):
-        """ Approve assignment """
         assignment_id = assignment['assignmentId']
 
         found_assignment = False
@@ -498,7 +497,7 @@ class MTurkServicesWrapper(object):
                     db_session.commit()
                 break
         if not found_assignment:
-            # approve assignments not found in DB if the assignment id has been specified
+            # reject assignments not found in DB if the assignment id has been specified
             if ignore_local_not_found:
                 response = self.amt_services.reject_assignment(assignment_id)
                 if response.success:
@@ -557,7 +556,6 @@ class MTurkServicesWrapper(object):
 
     @amt_services_wrapper_response
     def unreject_mturk_assignment(self, assignment, ignore_local_not_found=False):
-        """ Approve assignment """
         assignment_id = assignment['assignmentId']
 
         found_assignment = False
@@ -580,7 +578,7 @@ class MTurkServicesWrapper(object):
                     db_session.commit()
                 break
         if not found_assignment:
-            # approve assignments not found in DB if the assignment id has been specified
+            # unreject assignments not found in DB if the assignment id has been specified
             if ignore_local_not_found:
                 response = self.amt_services.unreject_assignment(assignment_id)
                 if response.success:
