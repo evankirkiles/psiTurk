@@ -401,7 +401,7 @@ class TestAmtServices(object):
                                  })
         stubber.add_response('approve_assignment', {},
                              {'AssignmentId': 'ABC', 'OverrideRejection': False})
-        response = amt_services_wrapper.approve_assignment_by_assignment_id('ABC')
+        response = amt_services_wrapper.approve_assignment('ABC')
         assert response.success
 
     def test_wrapper_approve_all_assignments(self, stubber, activate_a_hit, helpers,
