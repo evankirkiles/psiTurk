@@ -550,7 +550,7 @@ class PsiturkNetworkShell(Cmd, object):
             self.poutput("Approving specified submissions{}{}...".format(
                 all_studies_msg, force_msg))
             for assignment_id in assignment_ids:
-                result = self.amt_services_wrapper.approve_assignment_by_assignment_id(
+                result = self.amt_services_wrapper.approve_assignment(
                     assignment_id, all_studies=all_studies)
                 self.poutput(result)
 
@@ -826,7 +826,7 @@ class PsiturkNetworkShell(Cmd, object):
                     return self.poutput(result)
                 results = result.data['results']
             elif arg['<assignment_id>']:
-                result = self.amt_services_wrapper.reject_assignments(
+                result = self.amt_services_wrapper.reject_assignment(
                     arg['<assignment_id>'], all_studies=all_studies)
                 if not result.success:
                     return self.poutput(result)

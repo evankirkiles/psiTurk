@@ -303,6 +303,9 @@ class MTurkServicesWrapper(object):
 
     def _try_fetch_local_credited_assignment(self, try_this):
         return self._try_fetch_local_assignment(try_this, with_psiturk_status=CREDITED)
+    
+    def _try_fetch_local_rejected_assignment(self, try_this):
+        return self._try_fetch_local_assignment(try_this, with_psiturk_status=REJECTED)
 
     @amt_services_wrapper_response
     def approve_all_assignments(self, all_studies=False):
@@ -313,7 +316,7 @@ class MTurkServicesWrapper(object):
         return {'results': results}
 
     @amt_services_wrapper_response
-    def approve_assignment_by_assignment_id(self, assignment_id, all_studies=False):
+    def approve_assignment(self, assignment_id, all_studies=False):
         tried_this = self._try_fetch_local_submitted_assignment(assignment_id)
         if isinstance(tried_this, Participant):
             result = self.approve_local_assignment(tried_this)
@@ -346,6 +349,13 @@ class MTurkServicesWrapper(object):
 
     def _get_local_submitted_assignments(self, hit_id=None):
         query = Participant.query.filter(Participant.status == SUBMITTED)
+        if hit_id:
+            query = query.filter(Participant.hitid == hit_id)
+        assignments = query.all()
+        return assignments
+    
+    def _get_local_rejected_assignments(self, hit_id=None):
+        query = Participant.query.filter(Participant.status == REJECTED)
         if hit_id:
             query = query.filter(Participant.hitid == hit_id)
         assignments = query.all()
@@ -389,12 +399,11 @@ class MTurkServicesWrapper(object):
         found_assignment = False
         parts = Participant.query. \
             filter(Participant.assignmentid == assignment_id). \
-            filter(Participant.status.in_([3, 4])). \
+            filter(Participant.status.in_([COMPLETED, SUBMITTED])). \
             all()
         # Iterate through all the people who completed this assignment.
         # This should be one person, and it should match the person who
         # submitted the HIT, but that doesn't always hold.
-        status_report = ''
         for part in parts:
             if part.workerid == assignment['workerId']:
                 found_assignment = True
@@ -419,75 +428,168 @@ class MTurkServicesWrapper(object):
         return {'assignment_id': assignment_id}
 
     @amt_services_wrapper_response
+    def reject_assignment(self, assignment_id, all_studies=False):
+        tried_this = self._try_fetch_local_submitted_assignment(assignment_id)
+        if isinstance(tried_this, Participant):
+            result = self.reject_local_assignment(tried_this)
+            return result
+        else:
+            if not all_studies:
+                raise AssignmentIdNotFoundInLocalDBError(assignment_id=assignment_id)
+            else:
+                response = self.amt_services.reject_assignment(assignment_id)
+                if response.success:
+                    return {'success': True}
+                else:
+                    raise response.exception
+
+    @amt_services_wrapper_response
     def reject_assignments_for_hit(self, hit_id, all_studies=False):
         if all_studies:
-            assignments = self.amt_services.get_assignments("Submitted").data
-            assignment_ids = [assignment['assignmentId'] for assignment in assignments if
-                              assignment['hitId'] == hit_id]
+            assignments = self.amt_services.get_assignments(
+                assignment_status='Submitted', hit_ids=[hit_id]).data
+            results = []
+            for assignment in assignments:
+                results.append(
+                    self.reject_mturk_assignment(assignment, ignore_local_not_found=all_studies))
         else:
-            assignments = self._get_local_submitted_assignments()
-            assignment_ids = [
-                assignment.assignmentid for assignment in assignments]
-        response = self.reject_assignments(assignment_ids)
-        return response.data
+            assignments = self._get_local_submitted_assignments(hit_id=hit_id)
+            results = []
+            for assignment in assignments:
+                results.append(self.reject_local_assignment(assignment))
+        return {'results': results, 'hit_id': hit_id}
 
     @amt_services_wrapper_response
-    def reject_assignments(self, assignment_ids, all_studies=False):
-        results = []
-        for assignment_id in assignment_ids:
-            result = self.reject_assignment(assignment_id)
-            results.append(result)
-        return {'results': results}
+    def reject_local_assignment(self, assignment):
+        try:
+            assignment_id = assignment.assignmentid
+            response = self.amt_services.reject_assignment(assignment_id)
+            if not response.success:
+                raise response.exception
+            assignment.status = REJECTED
+            db_session.add(assignment)
+            db_session.commit()
+            return {'assignment_id': assignment_id}
+        except Exception as e:
+            return {'exception': e, 'assignment': assignment}
 
     @amt_services_wrapper_response
-    def reject_assignment(self, assignment_id, all_studies=False):
-        response = self.amt_services.reject_assignment(assignment_id)
-        if not response.success:
-            raise response.exception
+    def reject_mturk_assignment(self, assignment, ignore_local_not_found=False):
+        """ Approve assignment """
+        assignment_id = assignment['assignmentId']
+
+        found_assignment = False
+        parts = Participant.query. \
+            filter(Participant.assignmentid == assignment_id). \
+            filter(Participant.status.in_([COMPLETED, SUBMITTED])). \
+            all()
+        # Iterate through all the people who completed this assignment.
+        # This should be one person, and it should match the person who
+        # submitted the HIT, but that doesn't always hold.
+        for part in parts:
+            if part.workerid == assignment['workerId']:
+                found_assignment = True
+                response = self.amt_services.reject_assignment(assignment_id)
+                if not response.success:
+                    raise response.exception
+                else:
+                    part.status = REJECTED
+                    db_session.add(part)
+                    db_session.commit()
+                break
+        if not found_assignment:
+            # approve assignments not found in DB if the assignment id has been specified
+            if ignore_local_not_found:
+                response = self.amt_services.reject_assignment(assignment_id)
+                if response.success:
+                    pass  # yay
+                else:
+                    raise response.exception
+            else:
+                raise WorkerIdNotFoundInLocalDBError()
+        return {'assignment_id': assignment_id}
+
+    @amt_services_wrapper_response
+    def unreject_assignment(self, assignment_id, all_studies=False):
+        tried_this = self._try_fetch_local_rejected_assignment(assignment_id)
+        if isinstance(tried_this, Participant):
+            result = self.unreject_local_assignment(tried_this)
+            return result
         else:
-            return {'success': True}
+            if not all_studies:
+                raise AssignmentIdNotFoundInLocalDBError(assignment_id=assignment_id)
+            else:
+                response = self.amt_services.unreject_assignment(assignment_id)
+                if response.success:
+                    return {'success': True}
+                else:
+                    raise response.exception
 
     @amt_services_wrapper_response
     def unreject_assignments_for_hit(self, hit_id, all_studies=False):
         if all_studies:
-            assignments = self.amt_services.get_assignments("Rejected").data
-            assignment_ids = [assignment['assignmentId'] for assignment in assignments if
-                              assignment['hitId'] == hit_id]
+            assignments = self.amt_services.get_assignments(
+                assignment_status='Rejected', hit_ids=[hit_id]).data
+            results = []
+            for assignment in assignments:
+                results.append(
+                    self.unreject_mturk_assignment(assignment, ignore_local_not_found=all_studies))
         else:
-            assignments = self._get_local_submitted_assignments()
-            assignment_ids = [
-                assignment.assignmentid for assignment in assignments]
-        response = self.unreject_assignments(assignment_ids)
-        return response.data
+            assignments = self._get_local_rejected_assignments(hit_id=hit_id)
+            results = []
+            for assignment in assignments:
+                results.append(self.unreject_local_assignment(assignment))
+        return {'results': results, 'hit_id': hit_id}
 
     @amt_services_wrapper_response
-    def unreject_assignments(self, assignment_ids, all_studies=False):
-        results = []
-        for assignment_id in assignment_ids:
-            result = self.unreject_assignment(assignment_id)
-            results.append(result)
-        return {'results': results}
+    def unreject_local_assignment(self, assignment):
+        try:
+            assignment_id = assignment.assignmentid
+            response = self.amt_services.unreject_assignment(assignment_id)
+            if not response.success:
+                raise response.exception
+            assignment.status = CREDITED
+            db_session.add(assignment)
+            db_session.commit()
+            return {'assignment_id': assignment_id}
+        except Exception as e:
+            return {'exception': e, 'assignment': assignment}
 
     @amt_services_wrapper_response
-    def unreject_assignment(self, assignment_id, all_studies=False):
-        """ Unreject assignment """
-        response = self.amt_services.unreject_assignment(assignment_id)
-        result = {}
-        if not response.success:
-            raise response.exception
-        else:
-            message = 'unrejected {}'.format(assignment_id)
-            try:
-                participant = Participant.query \
-                    .filter(Participant.assignmentid == assignment_id) \
-                    .order_by(Participant.beginhit.desc()).first()
-                participant.status = CREDITED
-                db_session.add(participant)
-                db_session.commit()
-            except:
-                message = '{} but failed to update local db'.format(
-                    message)
-        return message
+    def unreject_mturk_assignment(self, assignment, ignore_local_not_found=False):
+        """ Approve assignment """
+        assignment_id = assignment['assignmentId']
+
+        found_assignment = False
+        parts = Participant.query. \
+            filter(Participant.assignmentid == assignment_id). \
+            filter(Participant.status == REJECTED). \
+            all()
+        # Iterate through all the people who were rejected for this assignment.
+        # This should be one person, and it should match the person who
+        # submitted the HIT, but that doesn't always hold.
+        for part in parts:
+            if part.workerid == assignment['workerId']:
+                found_assignment = True
+                response = self.amt_services.unreject_assignment(assignment_id)
+                if not response.success:
+                    raise response.exception
+                else:
+                    part.status = CREDITED
+                    db_session.add(part)
+                    db_session.commit()
+                break
+        if not found_assignment:
+            # approve assignments not found in DB if the assignment id has been specified
+            if ignore_local_not_found:
+                response = self.amt_services.unreject_assignment(assignment_id)
+                if response.success:
+                    pass  # yay
+                else:
+                    raise response.exception
+            else:
+                raise WorkerIdNotFoundInLocalDBError()
+        return {'assignment_id': assignment_id}
 
     @amt_services_wrapper_response
     def bonus_all_local_assignments(self, amount, reason, override_bonused_status=False):
